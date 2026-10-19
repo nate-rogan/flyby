@@ -1,7 +1,0 @@
-{
-  "region": "dev",
-  "machine": "vite-dev-server",
-  "app": "flyby",
-  "tailscale": { "status": "disabled", "ip": "" },
-  "started": null
-}

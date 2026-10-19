@@ -1,0 +1,22 @@
+# Local stand-in for Fly: the app container + a throwaway Postgres.
+#   docker compose up --build   →   http://localhost:8080
+services:
+  app:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      DATABASE_URL: postgresql://flyby:flyby@db:5432/flyby
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flyby
+      POSTGRES_PASSWORD: flyby
+      POSTGRES_DB: flyby
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "flyby"]
+      interval: 2s
+      retries: 15

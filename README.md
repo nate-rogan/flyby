@@ -1,64 +1,73 @@
 # flyby
 
-A minimal Fly.io deployment sample: a static React (Vite) site served by Caddy,
-with an **optional** Tailscale stub. Distilled from the `bind` / `bound` deploys.
+A minimal Fly.io deployment sample: a React (Vite) site and a FastAPI backend in one
+container, plus Fly Managed Postgres and a **disabled** Tailscale stub.
+Intended as a starting template for small Fly.io apps.
 
 ```
-Dockerfile   node build → caddy:2-alpine (+ tailscale binaries)
-start.sh     optional tailscaled → writes /srv/status.json → exec caddy
-Caddyfile    /health for Fly checks, SPA fallback, static files
-fly.toml     syd, 256MB shared, scale-to-zero, health check
-frontend/    Vite + React; reads /status.json to show region/machine/tailscale
+Dockerfile     node builds the React site → python:3.12-slim runs FastAPI, which serves the API and the site
+start.sh       Tailscale stub (commented out) → exec uvicorn
+fly.toml       syd, 512MB shared, scale-to-zero, /health check
+compose.yaml   local stand-in: the app container + a throwaway Postgres
+backend/       FastAPI: /health, /api/v1/{status,notes,ollama/models}, serves the React site
+frontend/      React page: runtime status, Postgres notes, Ollama stub
+docs/          tailscale.md — how to enable Tailscale safely, and why it's off
 ```
+
+| Feature | Turned on by | When unset |
+|---|---|---|
+| Postgres notes | `DATABASE_URL` (set by `fly mpg attach`) | `/api/v1/notes` → 503 |
+| Ollama over Tailscale | `OLLAMA_BASE_URL` plus enabling the stub | `/api/v1/ollama/models` → 503 |
+
+`/health` never touches the database, so a Postgres outage doesn't make Fly restart the machine.
 
 ## Run locally
 
 ```bash
-# dev server (uses frontend/public/status.json placeholder)
-cd frontend && npm install && npm run dev
+docker compose up --build          # app + Postgres → http://localhost:8080
 
-# the real container
-docker build -t flyby .
-docker run --rm -p 8080:8080 flyby          # http://localhost:8080
+# or with hot reload:
+cd backend && uv run uvicorn flyby.main:app --reload --port 8000   # (STATIC_DIR=../frontend/dist)
+cd frontend && npm install && npm run dev                          # proxies /api → :8000
+
+cd backend && uv run --group dev pytest                            # tests
 ```
 
 ## Deploy to Fly.io
 
 ```bash
 fly auth login
-# app names are global — pick your own and update `app` in fly.toml to match
-fly apps create flyby-<yourname>
+fly apps create flyby-<yourname>   # names are global; put the same name in fly.toml `app`
+
+# Postgres: create a managed cluster, then attach it. Attaching sets the DATABASE_URL secret.
+fly mpg create                     # choose region syd to sit next to the app
+fly mpg list                       # copy the cluster ID
+fly mpg attach <cluster-id> -a flyby-<yourname>
+
 fly deploy
-fly open                                    # https://flyby-<yourname>.fly.dev
+fly scale count 1                  # optional: deploy creates 2 machines by default
+fly open
 ```
 
-Useful afterwards:
+Useful afterwards: `fly logs`, `fly status`, `fly ssh console`, `fly mpg connect`.
 
-```bash
-fly logs                 # startup output from start.sh
-fly status               # machines + health checks
-fly ssh console          # shell into the machine
-fly scale count 1        # (deploy creates 2 machines by default; 1 is plenty here)
-```
+The app machine stops when idle and wakes on the next request, so the first hit
+has a short cold start. Managed Postgres is billed separately and runs all the
+time. Check Fly's current pricing, and run `fly mpg destroy` when you're done
+experimenting.
 
-The machine stops when idle and wakes on the next request (`auto_stop_machines`),
-so expect a short cold start on the first hit.
+The table is created on startup (`CREATE TABLE IF NOT EXISTS`). A real app would
+use migrations (e.g. Alembic). Database connections turn off prepared statements
+because Fly's managed Postgres sits behind PgBouncer.
 
-## Tailscale (optional)
+## Tailscale
 
-Skipped entirely unless `TS_AUTHKEY` is set. With it, the Fly machine joins your
-tailnet so the app could reach private services (e.g. an Ollama box at `100.x.y.z`),
-as `bind` does.
+Off by design. A public app on your tailnet is a path to your private devices.
+See [docs/tailscale.md](docs/tailscale.md) for how to enable it safely: tagged key,
+access rule limited to one port, `--shields-up`, no `--accept-routes`.
 
-1. Tailscale admin → Settings → Keys → generate an auth key, **Reusable + Ephemeral**.
-   (State is in-memory, so ephemeral keys stop dead nodes piling up in your admin.)
-2. `fly secrets set TS_AUTHKEY=tskey-auth-...` (this redeploys)
-3. Optional: `fly secrets set TS_HOSTNAME=my-name` (default `flyby-fly`)
+## Secrets
 
-The homepage will show `tailscale: connected (100.x.y.z)`. A Tailscale failure
-is logged but never stops the site.
-
-This is a stub: nothing in the static site *uses* the tailnet. To actually call a
-private service you'd add a backend (or a Caddy `reverse_proxy` to the tailnet IP).
-If you want a stable node identity instead of ephemeral, add a volume
-(`[[mounts]]` in fly.toml, as in `bind`) and change `--state=mem:` to a file on it.
+Nothing secret lives in this repo. Set real values with `fly secrets set` (or
+`fly mpg attach` for the database). `.env` is git-ignored; `.env.example` only
+lists the variable names.

@@ -6,19 +6,24 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# ---- Stage 2: Caddy serves the static files (+ optional Tailscale) ----
-FROM caddy:2-alpine
+# ---- Stage 2: FastAPI serves the API + the built site ----
+FROM python:3.12-slim
+WORKDIR /app
 
-# Tailscale binaries copied from the official image (only used if TS_AUTHKEY is set)
-COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
-COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale  /usr/local/bin/tailscale
-RUN apk add --no-cache ca-certificates iptables ip6tables && \
-    mkdir -p /var/run/tailscale /var/lib/tailscale
+# Tailscale — STUB, disabled. See docs/tailscale.md before uncommenting.
+# RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates iptables \
+#     && rm -rf /var/lib/apt/lists/* && mkdir -p /var/run/tailscale
+# COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+# COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale  /usr/local/bin/tailscale
 
-COPY Caddyfile /etc/caddy/Caddyfile
-COPY --from=frontend /app/dist /srv
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY backend/pyproject.toml backend/
+COPY backend/src/ backend/src/
+RUN pip install --no-cache-dir ./backend
 
+COPY --from=frontend /app/dist ./frontend/dist
+COPY start.sh .
+RUN chmod +x start.sh
+
+ENV STATIC_DIR=/app/frontend/dist
 EXPOSE 8080
-CMD ["/start.sh"]
+CMD ["./start.sh"]

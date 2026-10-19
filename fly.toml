@@ -1,0 +1,28 @@
+# Fly.io app config. Change `app` to something globally unique before deploying.
+app = "flyby-demo"
+primary_region = "syd"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "stop"   # scale to zero when idle
+  auto_start_machines  = true     # wake on next request
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval     = "15s"
+    timeout      = "5s"
+    grace_period = "10s"
+    method       = "GET"
+    path         = "/health"
+
+[[vm]]
+  cpu_kind  = "shared"
+  cpus      = 1
+  memory_mb = 256
